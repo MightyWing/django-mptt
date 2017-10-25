@@ -8,7 +8,6 @@ import sys
 import tempfile
 import unittest
 
-from django import forms
 from django.contrib.auth.models import Group, User
 from django.db.models import Q
 from django.db.models.query_utils import DeferredAttribute
@@ -25,7 +24,6 @@ try:
 except ImportError:
     mock_signal_receiver = None
 
-from mptt.admin import JS
 from mptt.exceptions import CantDisableUpdates, InvalidMove
 from mptt.models import MPTTModel
 from mptt.managers import TreeManager
@@ -2011,23 +2009,6 @@ class DraggableMPTTAdminTestCase(TreeTestCase):
             3 2 2 1 2 3
             """)
 
-    def test_js(self):
-        media = forms.Media()
-        media.add_js([
-            JS('asset1.js', {}),
-            JS('asset2.js', {'id': 'something', 'answer': '"42"'}),
-        ])
-
-        # We can test the exact representation since forms.Media has been
-        # really stable for a long time, and JS() uses flatatt which
-        # alphabetically sorts its attributes.
-        self.assertEqual(
-            '%s' % media,
-            '<script type="text/javascript" src="/static/asset1.js"></script>\n'
-            '<script type="text/javascript" src="/static/asset2.js"'
-            ' answer="&quot;42&quot;" id="something"></script>'
-        )
-
 
 class BookAdmin(ModelAdmin):
     list_filter = (
@@ -2362,3 +2343,53 @@ class NullableOrderedInsertion(TreeTestCase):
             2 1 1 1 2 3
             3 1 1 1 4 5
         """)
+        
+
+class ModelMeta(TreeTestCase):
+    def test_index_together(self):
+        already_idx = [['tree_id', 'lft'], ('tree_id', 'lft')]
+        no_idx = [tuple(), list()]
+        some_idx = [['tree_id'], ('tree_id',), [['tree_id']], (('tree_id',),)]
+        
+        for idx, case in enumerate(already_idx + no_idx + some_idx):
+            class Meta:
+                index_together = case
+                app_label = 'myapp'
+
+            # Use type() here and in test_index_together_different_attr over
+            # an explicit class X(MPTTModel):, as this throws a warning that
+            # re-registering models with the same name (which is what an explicit
+            # class does) could cause errors. Kind of... weird, but surprisingly
+            # effective.
+
+            # Use str(__name__) as __module__ must be a 'str' type and not unicode
+            # on Python 2.7
+
+            SomeModel = type(str('model_{0}'.format(idx)), (MPTTModel,), {
+                'Meta': Meta,
+                '__module__': str(__name__)
+            })
+
+            self.assertIn(('tree_id', 'lft'), SomeModel._meta.index_together)
+
+    def test_index_together_different_attr(self):
+        already_idx = [['abc', 'def'], ('abc', 'def')]
+        no_idx = [tuple(), list()]
+        some_idx = [['abc'], ('abc',), [['abc']], (('abc',),)]
+
+        for idx, case in enumerate(already_idx + no_idx + some_idx):
+            class MPTTMeta:
+                tree_id_attr = 'abc'
+                left_attr = 'def'
+
+            class Meta:
+                index_together = case
+                app_label = 'myapp'
+
+            SomeModel = type(str('model__different_attr_{0}'.format(idx)), (MPTTModel,), {
+                'MPTTMeta': MPTTMeta,
+                'Meta': Meta,
+                '__module__': str(__name__)
+            })
+
+            self.assertIn(('abc', 'def'), SomeModel._meta.index_together)

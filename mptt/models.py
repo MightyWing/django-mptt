@@ -11,7 +11,7 @@ from django.db.models.query_utils import DeferredAttribute
 from django.utils import six
 from django.utils.translation import ugettext as _
 
-from mptt.compat import remote_field
+from mptt.compat import cached_field_value, remote_field
 from mptt.fields import TreeForeignKey, TreeOneToOneField, TreeManyToManyField
 from mptt.managers import TreeManager
 from mptt.signals import node_moved
@@ -326,8 +326,10 @@ class MPTTModelBase(ModelBase):
 
                 bases.insert(0, MPTTModel)
                 cls.__bases__ = tuple(bases)
-
-            if _get_tree_model(cls) is cls:
+                
+            is_cls_tree_model = _get_tree_model(cls) is cls
+            
+            if is_cls_tree_model:
                 # HACK: _meta.get_field() doesn't work before AppCache.ready in Django>=1.8
                 # ( see https://code.djangoproject.com/ticket/24231 )
                 # So the only way to get existing fields is using local_fields on all superclasses.
@@ -336,11 +338,19 @@ class MPTTModelBase(ModelBase):
                     if hasattr(base, '_meta'):
                         existing_field_names.update([f.name for f in base._meta.local_fields])
 
-                for key in ('left_attr', 'right_attr', 'tree_id_attr', 'level_attr'):
-                    field_name = getattr(cls._mptt_meta, key)
+                mptt_meta = cls._mptt_meta
+                field_names = (mptt_meta.left_attr, mptt_meta.right_attr, mptt_meta.tree_id_attr, mptt_meta.level_attr)
+
+                for field_name in field_names:
                     if field_name not in existing_field_names:
                         field = models.PositiveIntegerField(db_index=True, editable=False)
                         field.contribute_to_class(cls, field_name)
+
+                # Add an index_together on tree_id_attr and left_attr, as these are very
+                # commonly queried (pretty much all reads).
+                index_together = (cls._mptt_meta.tree_id_attr, cls._mptt_meta.left_attr)
+                if index_together not in cls._meta.index_together:
+                    cls._meta.index_together += (index_together,)
 
             # Add a tree manager, if there isn't one already
             if not abstract:
@@ -845,7 +855,7 @@ class MPTTModel(six.with_metaclass(MPTTModelBase, models.Model)):
             # unless we're also inside TreeManager.delay_mptt_updates()
             if self._mpttfield('left') is None:
                 # we need to set *some* values, though don't care too much what.
-                parent = getattr(self, '_%s_cache' % opts.parent_attr, None)
+                parent = cached_field_value(self, opts.parent_attr)
                 # if we have a cached parent, have a stab at getting
                 # possibly-correct values.  otherwise, meh.
                 if parent:
@@ -1026,7 +1036,7 @@ class MPTTModel(six.with_metaclass(MPTTModelBase, models.Model)):
         target_right = self._mpttfield('right')
         tree_id = self._mpttfield('tree_id')
         self._tree_manager._close_gap(tree_width, target_right, tree_id)
-        parent = getattr(self, '_%s_cache' % self._mptt_meta.parent_attr, None)
+        parent = cached_field_value(self, self._mptt_meta.parent_attr)
         if parent:
             right_shift = -self.get_descendant_count() - 2
             self._tree_manager._post_insert_update_cached_parent_right(parent, right_shift)

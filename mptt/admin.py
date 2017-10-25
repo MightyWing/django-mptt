@@ -2,13 +2,11 @@ from __future__ import unicode_literals
 
 import json
 
-from django import http
+from django import forms, http
 from django.conf import settings
 from django.contrib.admin.actions import delete_selected
 from django.contrib.admin.options import ModelAdmin
 from django.db import IntegrityError, transaction
-from django.forms.utils import flatatt
-from django.templatetags.static import static
 from django.utils.encoding import force_text
 from django.utils.html import format_html, mark_safe
 from django.utils.translation import ugettext as _, ugettext_lazy
@@ -20,6 +18,8 @@ from django.core.serializers.json import DjangoJSONEncoder
 from django.utils.encoding import smart_text
 from django.utils.translation import get_language_bidi
 from django.db.models.fields.related import ForeignObjectRel, ManyToManyField
+
+from js_asset import JS
 
 from mptt.compat import remote_field, remote_model
 from mptt.exceptions import InvalidMove
@@ -95,52 +95,12 @@ class MPTTModelAdmin(ModelAdmin):
 
     def get_actions(self, request):
         actions = super(MPTTModelAdmin, self).get_actions(request)
-        if 'delete_selected' in actions:
+        if actions is not None and 'delete_selected' in actions:
             actions['delete_selected'] = (
                 self.delete_selected_tree,
                 'delete_selected',
                 _('Delete selected %(verbose_name_plural)s'))
         return actions
-
-
-class JS(object):
-    """
-    Use this to insert a script tag via ``forms.Media`` containing additional
-    attributes (such as ``id`` and ``data-*`` for CSP-compatible data
-    injection.)::
-
-        media.add_js([
-            JS('asset.js', {
-                'id': 'asset-script',
-                'data-the-answer': '"42"',
-            }),
-        ])
-
-    The rendered media tag (via ``{{ media.js }}`` or ``{{ media }}`` will
-    now contain a script tag as follows, without line breaks::
-
-        <script type="text/javascript" src="/static/asset.js"
-            data-answer="&quot;42&quot;" id="asset-script"></script>
-
-    The attributes are automatically escaped. The data attributes may now be
-    accessed inside ``asset.js``::
-
-        var answer = document.querySelector('#asset-script').dataset.answer;
-    """
-    def __init__(self, js, attrs):
-        self.js = js
-        self.attrs = attrs
-
-    def startswith(self, _):
-        # Masquerade as absolute path so that we are returned as-is.
-        return True
-
-    def __html__(self):
-        return format_html(
-            '{}"{}',
-            static(self.js),
-            mark_safe(flatatt(self.attrs)),
-        ).rstrip('"')
 
 
 class DraggableMPTTAdmin(MPTTModelAdmin):
@@ -192,17 +152,19 @@ class DraggableMPTTAdmin(MPTTModelAdmin):
             request, *args, **kwargs)
 
         try:
-            response.context_data['media'].add_css({'all': (
-                'mptt/draggable-admin.css',
-            )})
-            response.context_data['media'].add_js((
-                JS('mptt/draggable-admin.js', {
-                    'id': 'draggable-admin-context',
-                    'data-context': json.dumps(
-                        self._tree_context(request), cls=DjangoJSONEncoder
-                    ),
-                }),
-            ),)
+            response.context_data['media'] = response.context_data['media'] + forms.Media(
+                css={
+                    'all': ['mptt/draggable-admin.css'],
+                },
+                js=[
+                    JS('mptt/draggable-admin.js', {
+                        'id': 'draggable-admin-context',
+                        'data-context': json.dumps(
+                            self._tree_context(request), cls=DjangoJSONEncoder
+                        ),
+                    }),
+                ],
+            )
         except (AttributeError, KeyError):
             # Not meant for us if there is no context_data attribute (no
             # TemplateResponse) or no media in the context.
