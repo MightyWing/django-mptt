@@ -254,8 +254,8 @@ class DraggableMPTTAdmin(MPTTModelAdmin):
                 'before': _('move node before node'),
                 'child': _('move node to child position'),
                 'after': _('move node after node'),
-                'collapseTree': _('Collapse tree'),
-                'expandTree': _('Expand tree'),
+                'collapseTree': _(u'收缩'),
+                'expandTree': _(u'展开'),
             },
             'expandTreeByDefault': self.expand_tree_by_default,
         }
